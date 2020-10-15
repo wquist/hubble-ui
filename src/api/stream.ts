@@ -1,10 +1,13 @@
 import { Message as ProtobufMessage } from 'google-protobuf';
+import _ from 'lodash';
 import {
   ClientReadableStream as GrpcStream,
   Error as GrpcError,
   Status as GrpcStatus,
+  StatusCode as GrpcStatusCode,
 } from 'grpc-web';
-import _ from 'lodash';
+
+import { ErrorWrapper } from './grpc/error';
 import { EventEmitter } from '~/utils/emitter';
 
 export { GrpcStream };
@@ -20,7 +23,7 @@ export enum StreamEvent {
 export type TypedHandler<T> = {
   [StreamEvent.DATA]: (data: T) => void;
   [StreamEvent.BATCH_DRAIN]: (data: T[]) => void;
-  [StreamEvent.ERROR]: (error: GrpcError) => void;
+  [StreamEvent.ERROR]: (error: ErrorWrapper) => void;
   [StreamEvent.END]: () => void;
   [StreamEvent.STATUS]: (status: GrpcStatus) => void;
 };
@@ -76,8 +79,7 @@ export class DataStream<Message extends ProtobufMessage> extends EventEmitter<
     this.grpcStream.on('data', this.onDataHandler);
 
     this.grpcStream.on('error', error => {
-      console.error(error);
-      this.emit(StreamEvent.ERROR, error);
+      this.emit(StreamEvent.ERROR, ErrorWrapper.fromGrpc(error));
     });
 
     this.grpcStream.on('status', status => {

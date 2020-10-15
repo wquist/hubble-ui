@@ -8,7 +8,7 @@ export type UpdateAction = (
 ) => void;
 export type ShowAction = (dismissHandler?: DismissHandler) => string;
 
-export type DismissHandler = (timeouted: boolean) => void;
+export type DismissHandler = (timedOut: boolean) => void;
 
 export class Notification {
   private isDismissed: boolean;

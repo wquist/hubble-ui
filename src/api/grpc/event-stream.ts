@@ -1,5 +1,6 @@
 import { throttle } from 'lodash';
 import { ClientReadableStream, Status, Error as GRPCError } from 'grpc-web';
+import { ErrorWrapper } from './error';
 
 import {
   GetEventsRequest,
@@ -39,6 +40,9 @@ export class EventStream extends EventEmitter<EventStreamHandlers>
   public static readonly FlowsThrottleDelay: number = 250;
 
   private stream: GRPCEventStream;
+  // private _params: EventParams;
+  // private _filters?: Filters;
+
   private flowBuffer: HubbleFlow[] = [];
   private throttledFlowReceived: () => void = () => {
     return;
@@ -309,10 +313,14 @@ export class EventStream extends EventEmitter<EventStreamHandlers>
     return [wlFilters, blFilters];
   }
 
-  constructor(stream: GRPCEventStream) {
+  constructor(
+    stream: GRPCEventStream /*, params: EventParams, filters?: Filters*/,
+  ) {
     super();
 
     this.stream = stream;
+    // this._params = params;
+    // this._filters = filters;
 
     this.setupThrottledHandlers();
     this.setupEventHandlers();
@@ -348,7 +356,7 @@ export class EventStream extends EventEmitter<EventStreamHandlers>
     });
 
     this.stream.on(GeneralStreamEventKind.Error, (e: GRPCError) => {
-      this.emit(GeneralStreamEventKind.Error, e);
+      this.emit(GeneralStreamEventKind.Error, ErrorWrapper.fromGrpc(e));
     });
 
     this.stream.on(GeneralStreamEventKind.End, () => {
@@ -419,4 +427,12 @@ export class EventStream extends EventEmitter<EventStreamHandlers>
   public get flowsDelay() {
     return EventStream.FlowsThrottleDelay;
   }
+
+  // public get params(): EventParams {
+  //   return this._params;
+  // }
+
+  // public get filters(): Filters | undefined {
+  //   return this._filters;
+  // }
 }

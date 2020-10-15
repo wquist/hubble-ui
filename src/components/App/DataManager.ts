@@ -1,7 +1,10 @@
 import _ from 'lodash';
+import retry from 'async-retry';
+
 import { API } from '~/api/general';
 import * as mockData from '~/api/__mocks__/data';
 import { GeneralStreamEventKind } from '~/api/general/stream';
+import { ErrorWrapper } from '~/api/grpc/error';
 
 import { HubbleFlow } from '~/domain/hubble';
 import { Filters, filterFlow } from '~/domain/filtering';
@@ -17,11 +20,13 @@ import {
   ServiceChange,
   ServiceLinkChange,
   IEventStream,
+  EventParams,
 } from '~/api/general/event-stream';
 
 import { Store, StoreFrame } from '~/store';
 
 export enum EventKind {
+  Connected = 'connected',
   StreamError = 'stream-error',
   StreamEnd = 'stream-end',
   FlowsDiff = 'flows-diff',
@@ -30,15 +35,32 @@ export enum EventKind {
 }
 
 type Events = {
-  [EventKind.StreamError]: () => void;
+  [EventKind.Connected]: () => void;
+  [EventKind.StreamError]: (err: StreamError) => void;
   [EventKind.StreamEnd]: () => void;
   [EventKind.FlowsDiff]: (frame: StoreFrame, diff: number) => void;
   [EventKind.StoreMocked]: () => void;
   [EventKind.NamespaceAdded]: (namespace: string) => void;
 };
 
+export type RetryCallback = (attempt: number, success: boolean) => void;
+
+export enum StreamKind {
+  Initial = 'initial',
+  Main = 'main',
+  Secondary = 'secondary',
+}
+
+export interface StreamError {
+  streamKind: StreamKind;
+  error: ErrorWrapper;
+  stream: IEventStream;
+}
+
 interface StreamDescriptor {
   stream: IEventStream;
+  eventParams: EventParams;
+  frame?: StoreFrame;
   filters?: Filters;
 }
 
@@ -73,17 +95,20 @@ export class DataManager extends EventEmitter<Events> {
 
   public setupMainStream(namespace: string) {
     const store = this.store;
-    const streamParams = store.controls.mainFilters
-      .clone()
-      .setNamespace(namespace);
+    const eventParams = EventParamsSet.All;
+    const filters = store.controls.mainFilters.clone().setNamespace(namespace);
 
-    const stream = this.api.v1.getEventStream(EventParamsSet.All, streamParams);
+    const frame = store.mainFrame;
+    const stream = this.api.v1.getEventStream(eventParams, filters);
 
-    this.setupGeneralEventHandlers(stream);
+    this.setupMainStreamHandlers(stream, frame);
+    this.mainStream = { stream, filters, eventParams, frame };
+  }
+
+  private setupMainStreamHandlers(stream: IEventStream, frame: StoreFrame) {
+    this.setupGeneralEventHandlers(stream, StreamKind.Main);
     this.setupNamespaceEventHandlers(stream);
-    this.setupServicesEventHandlers(stream, store.mainFrame);
-
-    this.mainStream = { stream, filters: streamParams };
+    this.setupServicesEventHandlers(stream, frame);
   }
 
   public dropMainStream() {
@@ -96,17 +121,25 @@ export class DataManager extends EventEmitter<Events> {
 
   public setupFilteringFrame(namespace: string) {
     const store = this.store;
-    const streamParams = store.controls.filters.clone().setNamespace(namespace);
+    const filters = store.controls.filters.clone().setNamespace(namespace);
+    const eventParams = EventParamsSet.All;
+    const frame = store.currentFrame.filter(filters);
+    store.pushFrame(frame);
 
-    const secondaryFrame = store.currentFrame.filter(streamParams);
-    store.pushFrame(secondaryFrame);
+    const stream = this.api.v1.getEventStream(eventParams, filters);
+    this.setupFilteringStreamHandlers(stream, frame, filters);
 
-    const stream = this.api.v1.getEventStream(EventParamsSet.All, streamParams);
-    this.setupGeneralEventHandlers(stream);
+    this.filteringStream = { stream, filters, eventParams, frame };
+  }
+
+  private setupFilteringStreamHandlers(
+    stream: IEventStream,
+    frame: StoreFrame,
+    filters: Filters,
+  ) {
+    this.setupGeneralEventHandlers(stream, StreamKind.Secondary);
     this.setupNamespaceEventHandlers(stream);
-    this.setupServicesEventHandlers(stream, secondaryFrame, streamParams);
-
-    this.filteringStream = { stream, filters: streamParams };
+    this.setupServicesEventHandlers(stream, frame, filters);
   }
 
   public dropFilteringFrame() {
@@ -119,12 +152,16 @@ export class DataManager extends EventEmitter<Events> {
   }
 
   public setupInitialStream() {
-    const stream = this.api.v1.getEventStream(EventParamsSet.Namespaces);
+    const eventParams = EventParamsSet.Namespaces;
+    const stream = this.api.v1.getEventStream(eventParams);
 
-    this.setupGeneralEventHandlers(stream);
+    this.setupInitialStreamHandlers(stream);
+    this.initialStream = { stream, eventParams };
+  }
+
+  private setupInitialStreamHandlers(stream: IEventStream) {
+    this.setupGeneralEventHandlers(stream, StreamKind.Initial);
     this.setupNamespaceEventHandlers(stream);
-
-    this.initialStream = { stream };
   }
 
   public dropInitialStream() {
@@ -143,6 +180,71 @@ export class DataManager extends EventEmitter<Events> {
 
     this.dropInitialStream();
     this.setupMainStream(namespace);
+  }
+
+  public retryError(err: StreamError, afterAttemptCb: RetryCallback) {
+    if (!err.error.isRetriable) return;
+    this.offAllStreamEvents(err.stream);
+    let attempt = 1;
+    console.log('in retryError');
+
+    retry(
+      stop => {
+        console.log('in retry callback');
+        let stream: IEventStream | null = null;
+        if (err.streamKind === StreamKind.Initial && this.initialStream) {
+          const { eventParams, filters } = this.initialStream;
+          const newStream = this.api.v1.getEventStream(eventParams, filters);
+
+          this.setupInitialStreamHandlers(newStream);
+          this.initialStream.stream = newStream;
+          stream = newStream;
+        }
+
+        if (err.streamKind === StreamKind.Main && this.mainStream) {
+          const { eventParams, filters, frame } = this.mainStream;
+          const newStream = this.api.v1.getEventStream(eventParams, filters);
+
+          this.setupMainStreamHandlers(newStream, frame!);
+          this.mainStream.stream = newStream;
+          stream = newStream;
+        }
+
+        if (err.streamKind === StreamKind.Secondary && this.filteringStream) {
+          const { eventParams, filters, frame } = this.filteringStream;
+          const newStream = this.api.v1.getEventStream(eventParams, filters);
+
+          this.setupFilteringStreamHandlers(newStream, frame!, filters!);
+          this.filteringStream.stream = newStream;
+          stream = newStream;
+        }
+
+        if (stream == null) {
+          stop(new Error('null stream (unreachable)'));
+          return;
+        }
+
+        return new Promise((resolve, reject) => {
+          stream!.once(GeneralStreamEventKind.Data, () => {
+            afterAttemptCb(attempt, true);
+            resolve();
+          });
+
+          stream!.once(GeneralStreamEventKind.Error, () => {
+            afterAttemptCb(attempt, false);
+            attempt += 1;
+            reject();
+          });
+        });
+      },
+      {
+        // retries: Infinity,
+        forever: true,
+        factor: 1.6,
+        minTimeout: 1000,
+        maxTimeout: 5000,
+      },
+    );
   }
 
   private setupNamespaceEventHandlers(stream: IEventStream) {
@@ -183,9 +285,16 @@ export class DataManager extends EventEmitter<Events> {
     });
   }
 
-  private setupGeneralEventHandlers(stream: IEventStream) {
-    stream.on(GeneralStreamEventKind.Error, () => {
-      this.emit(EventKind.StreamError);
+  private setupGeneralEventHandlers(
+    stream: IEventStream,
+    streamKind: StreamKind,
+  ) {
+    stream.once(GeneralStreamEventKind.Data, () => {
+      this.emit(EventKind.Connected);
+    });
+
+    stream.on(GeneralStreamEventKind.Error, error => {
+      this.emit(EventKind.StreamError, { stream, streamKind, error });
     });
 
     stream.on(GeneralStreamEventKind.End, () => {

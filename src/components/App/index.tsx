@@ -37,7 +37,7 @@ import {
 } from '~/domain/layout/service-map';
 
 import { useStore } from '~/store';
-import { useNotifier } from '~/notifier';
+import { useNotifier, Notification } from '~/notifier';
 
 import { API } from '~/api/general';
 import * as storage from '~/storage/local';
@@ -59,6 +59,8 @@ export const App: FunctionComponent<AppProps> = observer(props => {
   const [isStreaming, setIsStreaming] = useState<boolean>(true);
   const [mapVisibleHeight, setMapVisibleHeight] = useState<number | null>(null);
   const [mapWasDragged, setMapWasDragged] = useState<boolean>(false);
+  const [unretriableErrShown, setUnretriableShown] = useState<boolean>(false);
+  const [retryNotif, setRetryNotif] = useState<Notification | null>(null);
 
   const notifier = useNotifier();
   const dataManager = useMemo(() => {
@@ -73,14 +75,59 @@ export const App: FunctionComponent<AppProps> = observer(props => {
   }, [dataManager]);
 
   useEffect(() => {
-    return dataManager.on(DataManagerEvents.StreamError, () => {
-      setIsStreaming(false);
-      notifier.showError(`
-        Failed to receive data from backend.
-        Please make sure that your deployment is up and try again.
-      `);
+    return dataManager.on(DataManagerEvents.StreamError, err => {
+      console.log('data manager error: ', err);
+
+      if (!err.error.isRetriable) {
+        if (unretriableErrShown) return;
+        setUnretriableShown(true);
+
+        notifier
+          .showError(
+            `
+          Unrecoverable error occured on the server.
+          Please make sure your deployment is up and try again.
+        `,
+          )
+          .onDismiss(() => setUnretriableShown(false));
+
+        return;
+      }
+
+      if (retryNotif != null) return;
+      dataManager.retryError(err, (attempt: number, success: boolean) => {
+        console.log('in retryError app: ', attempt, success);
+        let notification: Notification | null = retryNotif;
+        if (notification == null) {
+          notification = notifier.showError(
+            `
+            Connection with backend was interrupted.
+            Trying to reconnect (attempt #${attempt})...
+          `,
+            0,
+          );
+
+          setRetryNotif(notification);
+        }
+
+        // if (success) {
+        //   notification.update('Connection established', 3000);
+        //   notification.onDismiss(() => {
+        //     setRetryNotif(null);
+        //   });
+        // }
+      });
+
+      // setConnErrorShown(true);
+      // setIsStreaming(false);
+      // notifier.showError(`
+      //   Failed to receive data from backend.
+      //   Please make sure that your deployment is up and try again.
+      // `).onDismiss(() => {
+      //   setConnErrorShown(false);
+      // });
     });
-  }, [dataManager, notifier]);
+  }, [dataManager, notifier, unretriableErrShown, retryNotif]);
 
   useEffect(() => {
     return dataManager.on(DataManagerEvents.StreamEnd, () => {
