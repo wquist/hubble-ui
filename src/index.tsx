@@ -23,12 +23,12 @@ declare global {
 const run = async () => {
   ui.setCSSVars(ui.sizes);
 
-  const routes: Route[] = [Route.new('service-map', { path: '(/:namespace)' })];
+  const routes: Route[] = [Route.new('service-map', { path: '(/hubble/:namespace)' })];
 
   const elems = (
     <NotifierProvider>
       <StoreProvider historySource={RouteHistorySourceKind.URL} routes={routes}>
-        <Router>
+        <Router basepath="/hubble">
           <App key="service-map" api={api} path="/*appPath" />
         </Router>
       </StoreProvider>
