@@ -49,11 +49,11 @@ export const Component: FunctionComponent<Props> = props => {
     <div className={css.accessPoint} id={String(accessPointId)}>
       <div className={css.icons}>
         <div className={css.circle} ref={imgContainer}>
-          <img src="/icons/misc/access-point.svg" />
+          <img src="icons/misc/access-point.svg" />
         </div>
 
         <div className={css.arrow}>
-          <img src="/icons/misc/ap-arrow-violet.svg" />
+          <img src="icons/misc/ap-arrow-violet.svg" />
         </div>
       </div>
 
