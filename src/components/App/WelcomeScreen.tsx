@@ -57,7 +57,7 @@ const NamespaceItem = memo<NamespaceItemProps>(function NamespaceItem(props) {
 
   return (
     <li>
-      <a href={`/${props.namespace}`} onClick={onClick}>
+      <a href={`/hubble/${props.namespace}`} onClick={onClick}>
         {props.namespace}
       </a>
     </li>

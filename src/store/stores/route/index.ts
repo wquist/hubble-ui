@@ -60,7 +60,7 @@ export default class RouteStore {
   }
 
   @computed get parts(): Array<string> {
-    return this.location.pathname.split('/').slice(1);
+    return this.location.pathname.split('/').slice(2);
   }
 
   @computed get params() {
@@ -154,7 +154,7 @@ export default class RouteStore {
   @action.bound
   setNamespace(namespace: string) {
     const route = this.currentRoute;
-    // console.log('setNamespace route: ', route);
+    console.log('setNamespace route: ', route);
     if (route == null) return;
 
     const newUrl = route.reverse({ namespace });
@@ -179,7 +179,7 @@ export default class RouteStore {
     const query = qs.length > 0 ? '?' + qs : '';
     const hash = transformed.hash.length > 0 ? '#' + this.hash : '';
 
-    this.history.navigate(`/${path}${query}${hash}`);
+    this.history.navigate(`/hubble/${path}${query}${hash}`);
   }
 
   @action.bound
@@ -229,7 +229,7 @@ export default class RouteStore {
     const search = currentSearch.length > 0 ? `?${currentSearch}` : '';
     const hash = this.hash.length > 0 ? `#${this.hash}` : '';
 
-    let path = this.location.pathname;
+    let path = this.location.pathname.replace('/hubble', '');
     while (path.length > 0 && path[path.length - 1] === '/') {
       path = path.slice(0, -1);
     }

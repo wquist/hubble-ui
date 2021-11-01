@@ -23,7 +23,7 @@ declare global {
 const run = async () => {
   ui.setCSSVars(ui.sizes);
 
-  const routes: Route[] = [Route.new('service-map', { path: '(/hubble/:namespace)' })];
+  const routes: Route[] = [Route.new('service-map', { path: '(/:namespace)' })];
 
   const elems = (
     <NotifierProvider>
